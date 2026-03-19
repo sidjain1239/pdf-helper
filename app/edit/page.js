@@ -1,9 +1,71 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { downloadBytes, fileToBytes, loadPdfJsLib } from "../lib/pdfClient";
+
+function pickReplacementFont(target) {
+  const token = `${target?.fontName || ""} ${target?.fontFamily || ""}`.toLowerCase();
+  const looksLikeTimes = token.includes("times");
+  const looksLikeCourier = token.includes("courier") || token.includes("mono");
+  const isBold = token.includes("bold") || token.includes("black") || token.includes("semibold") || token.includes("demi");
+  const isItalic = token.includes("italic") || token.includes("oblique");
+
+  if (looksLikeTimes) {
+    if (isBold && isItalic) return StandardFonts.TimesRomanBoldItalic;
+    if (isBold) return StandardFonts.TimesRomanBold;
+    if (isItalic) return StandardFonts.TimesRomanItalic;
+    return StandardFonts.TimesRoman;
+  }
+
+  if (looksLikeCourier) {
+    if (isBold && isItalic) return StandardFonts.CourierBoldOblique;
+    if (isBold) return StandardFonts.CourierBold;
+    if (isItalic) return StandardFonts.CourierOblique;
+    return StandardFonts.Courier;
+  }
+
+  if (isBold && isItalic) return StandardFonts.HelveticaBoldOblique;
+  if (isBold) return StandardFonts.HelveticaBold;
+  if (isItalic) return StandardFonts.HelveticaOblique;
+  return StandardFonts.Helvetica;
+}
+
+function sampleTextColorFromPreview(target, previewCanvas) {
+  if (!target || !previewCanvas) return rgb(0, 0, 0);
+  const ctx = previewCanvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return rgb(0, 0, 0);
+
+  const x = Math.max(0, Math.floor(target.x));
+  const y = Math.max(0, Math.floor(target.y - target.height));
+  const w = Math.max(1, Math.min(previewCanvas.width - x, Math.ceil(target.width)));
+  const h = Math.max(1, Math.min(previewCanvas.height - y, Math.ceil(target.height * 1.2)));
+
+  if (w <= 0 || h <= 0) return rgb(0, 0, 0);
+
+  const data = ctx.getImageData(x, y, w, h).data;
+  let rSum = 0;
+  let gSum = 0;
+  let bSum = 0;
+  let count = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const a = data[i + 3];
+    if (a < 24) continue;
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    // Skip near-white pixels to reduce page background influence.
+    if (r > 240 && g > 240 && b > 240) continue;
+    rSum += r;
+    gSum += g;
+    bSum += b;
+    count += 1;
+  }
+
+  if (!count) return rgb(0, 0, 0);
+  return rgb(rSum / (count * 255), gSum / (count * 255), bSum / (count * 255));
+}
 
 export default function EditPage() {
   const previewCanvasRef = useRef(null);
@@ -29,6 +91,7 @@ export default function EditPage() {
   const [replaceTextValue, setReplaceTextValue] = useState("");
   const [textEditSupported, setTextEditSupported] = useState(false);
   const [textEditSupportReason, setTextEditSupportReason] = useState("");
+  const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
 
   const [drawing, setDrawing] = useState(false);
   const [pageJump, setPageJump] = useState("1");
@@ -73,9 +136,11 @@ export default function EditPage() {
         const overlay = overlayCanvasRef.current;
         overlay.width = viewport.width;
         overlay.height = viewport.height;
+        setCanvasSize({ width: viewport.width, height: viewport.height });
         clearOverlay();
 
         const content = await page.getTextContent();
+        const styles = content.styles || {};
         const mapped = content.items
           .map((item, idx) => {
             const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
@@ -83,6 +148,7 @@ export default function EditPage() {
             const y = tx[5];
             const pdfFontSize = Math.max(8, Math.hypot(item.transform[2], item.transform[3]));
             const h = Math.max(10, pdfFontSize * viewport.scale);
+            const style = styles[item.fontName] || {};
             return {
               id: idx,
               text: item.str,
@@ -93,7 +159,9 @@ export default function EditPage() {
               pdfX: item.transform[4],
               pdfY: item.transform[5],
               pdfWidth: Math.max(8, item.width),
-              pdfFontSize
+              pdfFontSize,
+              fontName: item.fontName || "",
+              fontFamily: style.fontFamily || ""
             };
           })
           .filter((item) => item.text && item.text.trim());
@@ -200,7 +268,12 @@ export default function EditPage() {
   function getPoint(e) {
     const canvas = overlayCanvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const scaleX = rect.width ? canvas.width / rect.width : 1;
+    const scaleY = rect.height ? canvas.height / rect.height : 1;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY
+    };
   }
 
   function startDraw(e) {
@@ -264,36 +337,55 @@ export default function EditPage() {
     setDrawing(false);
   }
 
-  async function applyOverlayToPdf() {
+  function overlayHasInk() {
+    const overlay = overlayCanvasRef.current;
+    if (!overlay || !overlay.width || !overlay.height) return false;
+    return overlay
+      .getContext("2d")
+      .getImageData(0, 0, overlay.width, overlay.height)
+      .data.some((v) => v !== 0);
+  }
+
+  async function commitOverlayToCurrentPage(options = {}) {
+    const { silent = true } = options;
+    if (!pdfBytes) throw new Error("Upload a PDF first");
+    if (!overlayHasInk()) return pdfBytes;
+
+    if (!silent) setStatus("Applying edits...");
+
+    const overlay = overlayCanvasRef.current;
+    const dataUrl = overlay.toDataURL("image/png");
+    const pngBytes = await fetch(dataUrl).then((r) => r.arrayBuffer());
+
+    const pdf = await PDFDocument.load(pdfBytes);
+    const page = pdf.getPage(selectedPage - 1);
+    const image = await pdf.embedPng(pngBytes);
+    const { width, height } = page.getSize();
+    page.drawImage(image, { x: 0, y: 0, width, height });
+
+    const result = await pdf.save({ useObjectStreams: false, addDefaultPage: false });
+    if (!result?.length) throw new Error("Generated PDF was empty");
+
+    setPdfBytes(result);
+    clearOverlay();
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    forceRender((v) => v + 1);
+
+    if (!silent) setStatus(`Edits applied to PDF page (${result.length} bytes)`);
+    return result;
+  }
+
+  async function changePageWithAutoApply(nextPage) {
+    if (!pdfBytes) return;
+    const clamped = Math.max(1, Math.min(pageCount || 1, nextPage));
+    if (clamped === selectedPage) return;
+
     try {
-      if (!pdfBytes) throw new Error("Upload a PDF first");
-      setStatus("Applying edits...");
-      const overlay = overlayCanvasRef.current;
-      const hasInk = overlay
-        .getContext("2d")
-        .getImageData(0, 0, overlay.width, overlay.height)
-        .data.some((v) => v !== 0);
-      if (!hasInk) throw new Error("Add edits on preview first");
-
-      const dataUrl = overlay.toDataURL("image/png");
-      const pngBytes = await fetch(dataUrl).then((r) => r.arrayBuffer());
-
-      const pdf = await PDFDocument.load(pdfBytes);
-      const page = pdf.getPage(selectedPage - 1);
-      const image = await pdf.embedPng(pngBytes);
-      const { width, height } = page.getSize();
-      page.drawImage(image, { x: 0, y: 0, width, height });
-
-      const result = await pdf.save({ useObjectStreams: false, addDefaultPage: false });
-      if (!result?.length) throw new Error("Generated PDF was empty");
-      setPdfBytes(result);
-      clearOverlay();
-      undoStackRef.current = [];
-      redoStackRef.current = [];
-      forceRender((v) => v + 1);
-      setStatus(`Edits applied to PDF page (${result.length} bytes)`);
+      await commitOverlayToCurrentPage({ silent: true });
+      setSelectedPage(clamped);
     } catch (error) {
-      setStatus(`Apply failed: ${error.message}`);
+      setStatus(`Auto-apply failed: ${error.message}`);
     }
   }
 
@@ -304,12 +396,15 @@ export default function EditPage() {
       if (selectedTextIndex < 0) throw new Error("Select a text item first");
       if (!replaceTextValue.trim()) throw new Error("Enter replacement text");
 
+      const baseBytes = await commitOverlayToCurrentPage({ silent: true });
+
       const target = textItems.find((t) => t.id === selectedTextIndex);
       if (!target) throw new Error("Selected text not found");
 
-      const pdf = await PDFDocument.load(pdfBytes);
+      const pdf = await PDFDocument.load(baseBytes);
       const page = pdf.getPage(selectedPage - 1);
-      const font = await pdf.embedFont(StandardFonts.Helvetica);
+      const font = await pdf.embedFont(pickReplacementFont(target));
+      const sampledColor = sampleTextColorFromPreview(target, previewCanvasRef.current);
 
       const textSize = Math.max(9, target.pdfFontSize);
       const pdfX = target.pdfX;
@@ -331,7 +426,7 @@ export default function EditPage() {
         y: pdfY,
         size: textSize,
         font,
-        color: rgb(0, 0, 0)
+        color: sampledColor
       });
 
       const result = await pdf.save({ useObjectStreams: true });
@@ -345,7 +440,8 @@ export default function EditPage() {
   async function duplicateCurrentPage() {
     try {
       if (!pdfBytes) throw new Error("Upload a PDF first");
-      const pdf = await PDFDocument.load(pdfBytes);
+      const baseBytes = await commitOverlayToCurrentPage({ silent: true });
+      const pdf = await PDFDocument.load(baseBytes);
       const [copied] = await pdf.copyPages(pdf, [selectedPage - 1]);
       pdf.insertPage(selectedPage, copied);
       const result = await pdf.save({ useObjectStreams: true });
@@ -360,7 +456,8 @@ export default function EditPage() {
   async function insertBlankPageAfter() {
     try {
       if (!pdfBytes) throw new Error("Upload a PDF first");
-      const pdf = await PDFDocument.load(pdfBytes);
+      const baseBytes = await commitOverlayToCurrentPage({ silent: true });
+      const pdf = await PDFDocument.load(baseBytes);
       const current = pdf.getPage(selectedPage - 1);
       const { width, height } = current.getSize();
       pdf.insertPage(selectedPage, [width, height]);
@@ -376,7 +473,8 @@ export default function EditPage() {
   async function deleteCurrentPage() {
     try {
       if (!pdfBytes) throw new Error("Upload a PDF first");
-      const pdf = await PDFDocument.load(pdfBytes);
+      const baseBytes = await commitOverlayToCurrentPage({ silent: true });
+      const pdf = await PDFDocument.load(baseBytes);
       if (pdf.getPageCount() <= 1) throw new Error("Cannot delete last page");
       pdf.removePage(selectedPage - 1);
       const result = await pdf.save({ useObjectStreams: true });
@@ -388,14 +486,15 @@ export default function EditPage() {
     }
   }
 
-  function downloadPdf() {
+  async function downloadPdf() {
     try {
       if (!pdfBytes?.length) {
         setStatus("No PDF data to download");
         return;
       }
+      const finalBytes = await commitOverlayToCurrentPage({ silent: true });
       const outName = fileName.replace(/\.pdf$/i, "") + "-edited.pdf";
-      downloadBytes(pdfBytes, outName, "application/pdf");
+      downloadBytes(finalBytes, outName, "application/pdf");
       setStatus(`Downloaded ${outName}`);
     } catch (error) {
       setStatus(`Download failed: ${error.message}`);
@@ -410,9 +509,6 @@ export default function EditPage() {
           <p className="mt-1 text-xs text-neutral-300">Paint-like editing directly on page preview.</p>
 
           <input type="file" accept=".pdf" className="mt-3 w-full rounded-lg p-2 text-xs" onChange={(e) => onUpload(e.target.files)} />
-          <Link href="/edit/watermark" className="mt-2 block rounded-lg bg-white/10 px-3 py-2 text-center text-sm hover:bg-white/15">
-            Open Watermark Studio
-          </Link>
 
           <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
             {["move", "brush", "highlight", "eraser", "redact", "text", ...(textEditSupported ? ["pdf-text-edit"] : [])].map((name) => (
@@ -481,15 +577,9 @@ export default function EditPage() {
               <button className="rounded-lg bg-white/10 px-2 py-2 text-xs" onClick={deleteCurrentPage}>
                 Delete Page
               </button>
-              <Link href="/edit/watermark" className="rounded-lg bg-white/10 px-2 py-2 text-center text-xs hover:bg-white/15">
-                Add Watermark
-              </Link>
             </div>
           </div>
 
-          <button className="neon-btn mt-3 w-full rounded-lg px-3 py-2" onClick={applyOverlayToPdf}>
-            Apply to Current Page
-          </button>
           <div className="mt-2 grid grid-cols-2 gap-2">
             <button
               className="rounded-lg bg-white/10 px-3 py-2 text-sm disabled:opacity-40"
@@ -518,7 +608,7 @@ export default function EditPage() {
           </div>
 
           <div className="mb-3 flex items-center gap-2 text-xs">
-            <button className="rounded bg-white/10 px-2 py-1" onClick={() => setSelectedPage((p) => Math.max(1, p - 1))}>
+            <button className="rounded bg-white/10 px-2 py-1" onClick={() => changePageWithAutoApply(selectedPage - 1)}>
               Prev
             </button>
             <span>
@@ -526,7 +616,7 @@ export default function EditPage() {
             </span>
             <button
               className="rounded bg-white/10 px-2 py-1"
-              onClick={() => setSelectedPage((p) => Math.min(pageCount || 1, p + 1))}
+              onClick={() => changePageWithAutoApply(selectedPage + 1)}
             >
               Next
             </button>
@@ -540,7 +630,7 @@ export default function EditPage() {
             />
             <button
               className="rounded bg-white/10 px-2 py-1"
-              onClick={() => setSelectedPage(Math.max(1, Math.min(pageCount || 1, Number(pageJump) || 1)))}
+              onClick={() => changePageWithAutoApply(Number(pageJump) || 1)}
             >
               Go
             </button>
@@ -560,7 +650,7 @@ export default function EditPage() {
               <div className="flex h-[72vh] items-center justify-center text-neutral-400">Upload a PDF to start editing</div>
             ) : (
               <div className="relative inline-block">
-                <canvas ref={previewCanvasRef} className="mx-auto rounded" />
+                <canvas ref={previewCanvasRef} className="mx-auto block rounded" />
                 {tool === "pdf-text-edit" && textEditSupported ? (
                   <div className="pointer-events-none absolute left-0 top-0 h-full w-full">
                     {textItems.map((item) => (
@@ -573,10 +663,10 @@ export default function EditPage() {
                             : "border-yellow-200/70 bg-yellow-300/15"
                         }`}
                         style={{
-                          left: `${item.x}px`,
-                          top: `${Math.max(0, item.y - item.height)}px`,
-                          width: `${Math.max(18, item.width)}px`,
-                          height: `${Math.max(12, item.height + 4)}px`
+                          left: `${(item.x / Math.max(1, canvasSize.width)) * 100}%`,
+                          top: `${(Math.max(0, item.y - item.height) / Math.max(1, canvasSize.height)) * 100}%`,
+                          width: `${(Math.max(18, item.width) / Math.max(1, canvasSize.width)) * 100}%`,
+                          height: `${(Math.max(12, item.height + 4) / Math.max(1, canvasSize.height)) * 100}%`
                         }}
                         onClick={() => {
                           setSelectedTextIndex(item.id);
@@ -590,7 +680,7 @@ export default function EditPage() {
                 ) : null}
                 <canvas
                   ref={overlayCanvasRef}
-                  className="absolute left-0 top-0 rounded"
+                  className="absolute left-0 top-0 block h-full w-full rounded"
                   style={{
                     touchAction: "none",
                     cursor: canvasCursor,

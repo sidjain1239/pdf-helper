@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
 import { downloadBytes, fileToBytes, loadPdfJsLib } from "../../lib/pdfClient";
 
@@ -302,9 +301,6 @@ export default function WatermarkPage() {
           <button className="neon-btn mt-2 w-full rounded-lg px-3 py-2" onClick={downloadResult}>
             Download Watermarked PDF
           </button>
-          <Link href="/edit" className="mt-2 block rounded-lg bg-white/10 px-3 py-2 text-center text-sm hover:bg-white/15">
-            Back to Edit
-          </Link>
         </aside>
 
         <section className="glass rounded-2xl p-4">

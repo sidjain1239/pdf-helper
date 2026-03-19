@@ -1,19 +1,73 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import JSZip from "jszip";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument } from "pdf-lib";
 import { downloadBytes, fileToBytes, loadPdfJsLib } from "../lib/pdfClient";
+
+const ReactQuill = dynamic(() => import("react-quill"), { ssr: false });
+
+const QUILL_MODULES = {
+  toolbar: [
+    [{ header: [1, 2, 3, false] }],
+    ["bold", "italic", "underline", "strike"],
+    [{ color: [] }, { background: [] }],
+    [{ list: "ordered" }, { list: "bullet" }],
+    [{ align: [] }],
+    ["blockquote", "code-block"],
+    ["clean"]
+  ]
+};
+
+const QUILL_FORMATS = [
+  "header",
+  "bold",
+  "italic",
+  "underline",
+  "strike",
+  "color",
+  "background",
+  "list",
+  "bullet",
+  "align",
+  "blockquote",
+  "code-block"
+];
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function textToRichHtml(value) {
+  const lines = String(value || "").split("\n");
+  return lines.map((line) => `<p>${escapeHtml(line) || "<br/>"}</p>`).join("");
+}
 
 export default function ConversionPage() {
   const [pdfBytes, setPdfBytes] = useState(null);
   const [images, setImages] = useState([]);
   const [textValue, setTextValue] = useState("Type text for Text to PDF");
+  const [richHtml, setRichHtml] = useState(textToRichHtml("Type text for Text to PDF"));
   const [excelFile, setExcelFile] = useState(null);
   const [pptxFile, setPptxFile] = useState(null);
   const [status, setStatus] = useState("Ready");
+  const editorWrapRef = useRef(null);
+
+  function setEditorFromPlainText(value) {
+    const safe = String(value || "");
+    setTextValue(safe);
+    setRichHtml(textToRichHtml(safe));
+  }
 
   async function uploadFiles(fileList) {
     const items = Array.from(fileList || []);
@@ -24,15 +78,15 @@ export default function ConversionPage() {
     if (imgs.length) setImages((prev) => [...prev, ...imgs]);
 
     const txt = items.find((f) => f.name.toLowerCase().endsWith(".txt"));
-    if (txt) setTextValue(await txt.text());
+    if (txt) setEditorFromPlainText(await txt.text());
 
     const docx = items.find((f) => /\.docx?$/.test(f.name.toLowerCase()));
     if (docx) {
       if (docx.name.toLowerCase().endsWith(".docx")) {
         const result = await mammoth.extractRawText({ arrayBuffer: await docx.arrayBuffer() });
-        setTextValue(result.value);
+        setEditorFromPlainText(result.value);
       } else {
-        setTextValue(await docx.text());
+        setEditorFromPlainText(await docx.text());
       }
     }
 
@@ -102,6 +156,7 @@ export default function ConversionPage() {
         fullText += `\n\n--- Page ${i} ---\n` + content.items.map((item) => item.str).join(" ");
       }
       setTextValue(fullText.trim());
+      setRichHtml(textToRichHtml(fullText.trim()));
       downloadBytes(new TextEncoder().encode(fullText), "pdf-text.txt", "text/plain");
       setStatus("PDF to text completed");
     } catch (error) {
@@ -110,27 +165,81 @@ export default function ConversionPage() {
   }
 
   async function textToPdf() {
+    const editorNode = editorWrapRef.current?.querySelector(".ql-editor");
+    const html = editorNode ? editorNode.innerHTML : richHtml;
+    await exportRichHtmlToPdf(html, "text-to-pdf-rich.pdf");
+  }
+
+  async function exportRichHtmlToPdf(html, fileName) {
     try {
-      setStatus("Converting text to PDF...");
-      const out = await PDFDocument.create();
-      const font = await out.embedFont(StandardFonts.Helvetica);
-      const lines = (textValue || "").split("\n");
-      let page = out.addPage([595, 842]);
-      let y = 800;
-      for (const line of lines) {
-        if (y < 60) {
-          page = out.addPage([595, 842]);
-          y = 800;
-        }
-        page.drawText(line.slice(0, 110), { x: 40, y, size: 12, font, color: rgb(0, 0, 0) });
-        y -= 18;
+      const safeHtml = String(html || "").trim();
+      if (!safeHtml) throw new Error("Editor is empty");
+
+      const renderHost = document.createElement("div");
+      renderHost.style.position = "fixed";
+      renderHost.style.left = "-10000px";
+      renderHost.style.top = "0";
+      renderHost.style.width = "794px";
+      renderHost.style.background = "#ffffff";
+      renderHost.style.padding = "24px";
+      renderHost.style.boxSizing = "border-box";
+      renderHost.style.zIndex = "-1";
+      renderHost.setAttribute("data-rich-pdf-host", "1");
+      renderHost.innerHTML = `<div class="ql-editor" style="min-height:auto">${safeHtml}</div>`;
+      document.body.appendChild(renderHost);
+
+      const editorNode = renderHost.querySelector(".ql-editor");
+      if (!editorNode) throw new Error("Rich editor content missing");
+
+      setStatus("Rendering rich text to PDF...");
+
+      const sourceCanvas = await html2canvas(editorNode, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        useCORS: true,
+        logging: false
+      });
+
+      const pdf = new jsPDF("p", "mm", "a4");
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const usableWidth = pageWidth - margin * 2;
+      const usableHeight = pageHeight - margin * 2;
+
+      const pageCanvasHeightPx = Math.max(1, Math.floor((usableHeight * sourceCanvas.width) / usableWidth));
+
+      let offsetPx = 0;
+      let pageIndex = 0;
+      while (offsetPx < sourceCanvas.height) {
+        const sliceHeightPx = Math.min(pageCanvasHeightPx, sourceCanvas.height - offsetPx);
+        const pageCanvas = document.createElement("canvas");
+        pageCanvas.width = sourceCanvas.width;
+        pageCanvas.height = sliceHeightPx;
+        const ctx = pageCanvas.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+        ctx.drawImage(sourceCanvas, 0, offsetPx, sourceCanvas.width, sliceHeightPx, 0, 0, sourceCanvas.width, sliceHeightPx);
+
+        const imgData = pageCanvas.toDataURL("image/png");
+        const drawnHeightMm = (sliceHeightPx * usableWidth) / sourceCanvas.width;
+        if (pageIndex > 0) pdf.addPage();
+        pdf.addImage(imgData, "PNG", margin, margin, usableWidth, drawnHeightMm);
+
+        offsetPx += sliceHeightPx;
+        pageIndex += 1;
       }
-      const bytes = await out.save({ useObjectStreams: true });
-      setPdfBytes(bytes);
-      downloadBytes(bytes, "text-to-pdf.pdf");
-      setStatus("Text to PDF completed");
+
+      const bytes = pdf.output("arraybuffer");
+      const outBytes = new Uint8Array(bytes);
+      setPdfBytes(outBytes);
+      downloadBytes(outBytes, fileName, "application/pdf");
+      setStatus(`Text to PDF completed (${pageIndex} page${pageIndex > 1 ? "s" : ""})`);
     } catch (error) {
       setStatus(`Failed: ${error.message}`);
+    } finally {
+      const staleHosts = Array.from(document.querySelectorAll("div[data-rich-pdf-host='1']"));
+      staleHosts.forEach((node) => node.remove());
     }
   }
 
@@ -156,8 +265,9 @@ export default function ConversionPage() {
         });
       });
 
-      setTextValue(combined.trim());
-      await textToPdf();
+      const cleanText = combined.trim();
+      setEditorFromPlainText(cleanText);
+      await exportRichHtmlToPdf(textToRichHtml(cleanText), "excel-to-pdf-rich.pdf");
       setStatus("Excel to PDF completed");
     } catch (error) {
       setStatus(`Failed: ${error.message}`);
@@ -186,8 +296,9 @@ export default function ConversionPage() {
         text += `\n\n--- Slide ${i + 1} ---\n${parts.join(" ")}`;
       }
 
-      setTextValue(text.trim());
-      await textToPdf();
+      const cleanText = text.trim();
+      setEditorFromPlainText(cleanText);
+      await exportRichHtmlToPdf(textToRichHtml(cleanText), "pptx-to-pdf-rich.pdf");
       setStatus("PPTX to PDF completed");
     } catch (error) {
       setStatus(`Failed: ${error.message}`);
@@ -239,7 +350,7 @@ export default function ConversionPage() {
             PDF to Text
           </button>
           <button className="neon-btn rounded-lg px-3 py-2" onClick={textToPdf}>
-            Text to PDF
+            Rich Text to PDF
           </button>
           <button className="neon-btn rounded-lg px-3 py-2" onClick={wordToPdf}>
             Word to PDF (basic)
@@ -255,11 +366,19 @@ export default function ConversionPage() {
           </button>
         </div>
 
-        <textarea
-          value={textValue}
-          onChange={(e) => setTextValue(e.target.value)}
-          className="mt-3 h-48 w-full rounded-lg p-3"
-        />
+        <div className="mt-3 rounded-lg border border-white/15 bg-white p-2 text-black" ref={editorWrapRef}>
+          <ReactQuill
+            theme="snow"
+            value={richHtml}
+            onChange={(html, _delta, _source, editor) => {
+              setRichHtml(html);
+              setTextValue(editor.getText());
+            }}
+            modules={QUILL_MODULES}
+            formats={QUILL_FORMATS}
+            placeholder="Write and format your content here..."
+          />
+        </div>
 
         <div className="mt-2 rounded-lg bg-black/30 p-2 text-xs text-neutral-300">
           <p>Excel selected: {excelFile ? excelFile.name : "None"}</p>

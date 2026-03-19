@@ -2,7 +2,9 @@ import Link from "next/link";
 
 const ITEMS = [
   { href: "/", label: "Home" },
-  { href: "/merge-compress", label: "Merge + Compress" },
+  { href: "/merge-compress", label: "Merge + Pages" },
+  { href: "/compression", label: "Compression" },
+  { href: "/present", label: "Present" },
   { href: "/edit", label: "Edit" },
   { href: "/edit/watermark", label: "Add Watermark" },
   { href: "/conversion", label: "Conversion" }

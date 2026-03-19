@@ -5,13 +5,23 @@ import { motion } from "framer-motion";
 
 const CARDS = [
   {
-    title: "Merge or Compress",
-    text: "Merge, split, extract, rotate, reorder and compress PDF files fully in browser.",
+    title: "Merge and Page Tools",
+    text: "Merge, split, extract, rotate, reorder, reverse, and duplicate PDF pages fully in browser.",
     href: "/merge-compress"
   },
   {
+    title: "Compression Studio",
+    text: "Dedicated compression section with Light, Balanced, Strong, and Extreme levels plus options.",
+    href: "/compression"
+  },
+  {
+    title: "PDF Presenter",
+    text: "Present or teach from PDF with fullscreen, pen, highlighter, eraser, and laser tools.",
+    href: "/present"
+  },
+  {
     title: "Edit",
-    text: "Paint-like editor with brush, highlight, eraser, and text box on PDF pages.",
+    text: "Editor with brush, highlight, eraser, and text box on PDF pages.",
     href: "/edit"
   },
   {
@@ -39,7 +49,38 @@ const FEATURE_GROUPS = [
       { label: "Reverse page order", href: "/merge-compress" },
       { label: "Duplicate specific page", href: "/merge-compress" },
       { label: "Page count detection", href: "/merge-compress" },
-      { label: "File size overview", href: "/merge-compress" }
+      { label: "File size overview", href: "/merge-compress" },
+      { label: "Result download", href: "/merge-compress" }
+    ]
+  },
+  {
+    title: "Compression Features",
+    features: [
+      { label: "Light compression level", href: "/compression" },
+      { label: "Balanced compression level", href: "/compression" },
+      { label: "Strong compression level", href: "/compression" },
+      { label: "Extreme compression level", href: "/compression" },
+      { label: "Per-page progress indicator", href: "/compression" },
+      { label: "Before and after size stats", href: "/compression" },
+      { label: "Optional grayscale compression", href: "/compression" },
+      { label: "Metadata stripping option", href: "/compression" },
+      { label: "Compress active file directly", href: "/compression" },
+      { label: "Dedicated compression route", href: "/compression" }
+    ]
+  },
+  {
+    title: "Presentation Tools",
+    features: [
+      { label: "Open PDF for teaching", href: "/present" },
+      { label: "Fullscreen presentation", href: "/present" },
+      { label: "Pen annotation while teaching", href: "/present" },
+      { label: "Highlighter during explanation", href: "/present" },
+      { label: "Eraser for live cleanup", href: "/present" },
+      { label: "Laser pointer focus", href: "/present" },
+      { label: "Page jump in class", href: "/present" },
+      { label: "Prev next slide style control", href: "/present" },
+      { label: "Zoom controls", href: "/present" },
+      { label: "Touch and pen support", href: "/present" }
     ]
   },
   {
@@ -90,10 +131,12 @@ const FEATURE_GROUPS = [
 ];
 
 const EXTRA_FEATURES = [
-  { label: "Drag and drop upload", href: "/merge-compress" },
+  { label: "Drag and drop upload", href: "/compression" },
   { label: "Multiple file upload", href: "/merge-compress" },
   { label: "Active file switcher", href: "/merge-compress" },
   { label: "Page jump control", href: "/edit" },
+  { label: "Presentation fullscreen mode", href: "/present" },
+  { label: "Laser teaching pointer", href: "/present" },
   { label: "Prev/next navigation", href: "/edit" },
   { label: "Result download button", href: "/merge-compress" },
   { label: "Status notifications", href: "/" },
@@ -104,6 +147,8 @@ const EXTRA_FEATURES = [
   { label: "Simple beginner UI", href: "/" },
   { label: "Readable operation labels", href: "/merge-compress" },
   { label: "Meaning help panel", href: "/merge-compress" },
+  { label: "Compression quality presets", href: "/compression" },
+  { label: "Compression feature checklist", href: "/compression" },
   { label: "Consistent route structure", href: "/" },
   { label: "Lightweight component structure", href: "/" }
 ];
@@ -154,7 +199,7 @@ export default function HomePage() {
       </section>
 
       <section className="glass rounded-2xl p-5 md:p-8">
-        <h2 className="text-center text-2xl font-semibold md:text-3xl">Feature Library (40+)</h2>
+        <h2 className="text-center text-2xl font-semibold md:text-3xl">Feature Library (50+)</h2>
         <p className="mx-auto mt-2 max-w-3xl text-center text-sm text-neutral-300">
           A long, complete feature showcase so you can quickly understand what the toolkit offers.
         </p>
@@ -204,7 +249,7 @@ export default function HomePage() {
         </div>
 
         <div className="mt-auto pt-8 text-center text-xs text-neutral-400">
-          made by Siddharth Jain
+          Made By Siddharth Jain
         </div>
       </section>
     </main>

@@ -1,3 +1,5 @@
+@import "quill/dist/quill.snow.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -107,6 +109,21 @@ textarea:focus {
 ::-webkit-scrollbar-thumb {
   background: rgba(255, 46, 46, 0.45);
   border-radius: 6px;
+}
+
+.ql-toolbar.ql-snow,
+.ql-container.ql-snow {
+  border-color: rgba(0, 0, 0, 0.15) !important;
+}
+
+.ql-container.ql-snow {
+  min-height: 220px;
+  font-size: 15px;
+}
+
+.ql-editor {
+  color: #111;
+  background: #fff;
 }
 
 @media (max-width: 768px) {

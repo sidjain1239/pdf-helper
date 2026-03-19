@@ -147,17 +147,6 @@ export default function MergeCompressPage() {
     });
   }
 
-  async function compress() {
-    await run("Compress", async () => {
-      if (!activeBytes) throw new Error("Select a PDF first");
-      const src = await PDFDocument.load(activeBytes);
-      src.setProducer("PDF Toolkit On-device");
-      const bytes = await src.save({ useObjectStreams: true, addDefaultPage: false });
-      setActiveBytes(bytes);
-      setActiveName("compressed.pdf");
-    });
-  }
-
   async function reversePages() {
     await run("Reverse pages", async () => {
       if (!activeBytes) throw new Error("Select a PDF first");
@@ -200,7 +189,7 @@ export default function MergeCompressPage() {
     <main className="mx-auto max-w-[1400px] p-4 md:p-6">
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
         <div className="glass rounded-2xl p-4">
-          <h1 className="text-xl font-semibold">Merge + Compress</h1>
+          <h1 className="text-xl font-semibold">Merge + Page Tools</h1>
           <p className="mt-1 text-xs text-neutral-300">All processing is on-device for privacy.</p>
 
           <input
@@ -226,9 +215,6 @@ export default function MergeCompressPage() {
           <div className="mt-3 flex gap-2">
             <button className="neon-btn w-full rounded-lg px-3 py-2 text-sm" onClick={mergeAll}>
               Merge All
-            </button>
-            <button className="neon-btn w-full rounded-lg px-3 py-2 text-sm" onClick={compress}>
-              Compress
             </button>
           </div>
 
