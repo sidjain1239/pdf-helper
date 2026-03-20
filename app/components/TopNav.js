@@ -7,7 +7,8 @@ const ITEMS = [
   { href: "/present", label: "Present" },
   { href: "/edit", label: "Edit" },
   { href: "/edit/watermark", label: "Add Watermark" },
-  { href: "/conversion", label: "Conversion" }
+  { href: "/conversion", label: "Conversion" },
+  { href: "/download", label: "Download + Guide" }
 ];
 
 export default function TopNav() {

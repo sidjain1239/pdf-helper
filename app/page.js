@@ -33,6 +33,11 @@ const CARDS = [
     title: "Watermark Studio",
     text: "Dedicated watermark page with controls for font, angle, color, opacity, and repeat count.",
     href: "/edit/watermark"
+  },
+  {
+    title: "Download and Full Guide",
+    text: "Download the Windows installer and read detailed how-to-use instructions in one place.",
+    href: "/download"
   }
 ];
 
@@ -126,6 +131,21 @@ const FEATURE_GROUPS = [
       { label: "No backend required", href: "/" },
       { label: "Responsive mobile layout", href: "/" },
       { label: "Neon glass theme", href: "/" }
+    ]
+  },
+  {
+    title: "Download and Help",
+    features: [
+      { label: "Windows installer download", href: "/download" },
+      { label: "Step-by-step usage guide", href: "/download" },
+      { label: "Tool-specific usage tips", href: "/download" },
+      { label: "Common issue troubleshooting", href: "/download" },
+      { label: "Best settings recommendations", href: "/download" },
+      { label: "Privacy and local processing notes", href: "/download" },
+      { label: "Beginner workflow walkthrough", href: "/download" },
+      { label: "Desktop app behavior notes", href: "/download" },
+      { label: "Output file location guidance", href: "/download" },
+      { label: "Creator information", href: "/download" }
     ]
   }
 ];
