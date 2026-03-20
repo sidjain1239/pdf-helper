@@ -16,6 +16,7 @@
     "next": "14.2.15",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.7.76",
+    "pdfmake": "^0.3.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-quill": "^2.0.0",

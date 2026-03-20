@@ -22,9 +22,9 @@ function makePdfSlide(pageNo) {
 }
 
 function drawBoardGrid(ctx, width, height, zoom) {
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = "#050505";
   ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = "rgba(15, 23, 42, 0.08)";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.14)";
   ctx.lineWidth = 1;
   const gap = Math.max(24, Math.round(30 * zoom));
 
@@ -109,7 +109,7 @@ export default function PresentPage() {
   const [tool, setTool] = useState("pen");
   const [penColor, setPenColor] = useState("#ff2e2e");
   const [penSize, setPenSize] = useState(4);
-  const [highlighterOpacity, setHighlighterOpacity] = useState(0.22);
+  const [highlighterOpacity] = useState(0.14);
 
   const [isDrawing, setIsDrawing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -388,10 +388,11 @@ export default function PresentPage() {
     persistCurrentInk();
     const blankCount = slides.filter((s) => s.kind === "blank").length;
     const newSlide = makeBlankSlide(blankCount + 1);
-    const nextSlides = [...slides, newSlide];
+    const insertAt = Math.max(0, Math.min(slides.length, activeSlideIndex + 1));
+    const nextSlides = [...slides.slice(0, insertAt), newSlide, ...slides.slice(insertAt)];
     setSlides(nextSlides);
-    setActiveSlideIndex(nextSlides.length - 1);
-    setStatus(`${newSlide.label} added`);
+    setActiveSlideIndex(insertAt);
+    setStatus(`${newSlide.label} added after current slide`);
   }
 
   async function saveDeckAsPdf() {
@@ -466,15 +467,20 @@ export default function PresentPage() {
   }
 
   return (
-    <main className="mx-auto max-w-[1500px] p-3 md:p-5">
-      <section className={`glass rounded-2xl p-2 md:p-3 ${isFullscreen ? "h-screen rounded-none border-0" : ""}`} ref={stageRef}>
-        <div className="mb-2 flex items-center justify-between gap-2 rounded-lg bg-black/35 px-3 py-2 text-xs text-neutral-200">
-          <span className="truncate">Deck: {fileName}</span>
-          <span>
-            Slide {activeSlideIndex + 1} / {slides.length}
-          </span>
-          <span className="truncate">{isPresentMode ? "Present Mode (Full Screen)" : status}</span>
-        </div>
+    <main className={`mx-auto max-w-[1500px] p-3 md:p-5 ${isPresentMode ? "h-screen max-w-none p-0" : ""}`}>
+      <section
+        className={`glass rounded-2xl p-2 md:p-3 ${isPresentMode ? "h-screen rounded-none border-0 p-2" : ""}`}
+        ref={stageRef}
+      >
+        {!isPresentMode ? (
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-lg bg-black/35 px-3 py-2 text-xs text-neutral-200">
+            <span className="truncate">Deck: {fileName}</span>
+            <span>
+              Slide {activeSlideIndex + 1} / {slides.length}
+            </span>
+            <span className="truncate">{status}</span>
+          </div>
+        ) : null}
 
         {!isPresentMode ? (
           <div className="mb-2 rounded-xl border border-white/10 bg-black/45 p-2 text-xs text-neutral-100">
@@ -496,11 +502,13 @@ export default function PresentPage() {
           </div>
         ) : null}
 
-        <div className={`relative overflow-auto rounded-lg border border-white/10 bg-black/40 p-2 ${isFullscreen ? "h-[calc(100vh-150px)]" : "h-[72vh]"}`}>
+        <div
+          className={`relative rounded-lg border border-white/10 bg-black/40 p-2 ${isPresentMode ? "h-[calc(100vh-84px)] overflow-auto" : "h-[72vh] overflow-auto"}`}
+        >
           {!activeSlide ? (
             <div className="flex h-full items-center justify-center text-neutral-400">Create a blank slide or open a PDF</div>
           ) : (
-            <div className="relative inline-block">
+            <div className="relative inline-block max-h-full">
               <canvas ref={baseCanvasRef} className="mx-auto block rounded" />
               <canvas
                 ref={overlayCanvasRef}
@@ -555,18 +563,6 @@ export default function PresentPage() {
             <label className="flex h-9 items-center gap-1 rounded-lg border border-white/15 bg-white/10 px-2">
               <Icon name="pen" className="h-3.5 w-3.5" />
               <input type="range" min="1" max="16" value={penSize} onChange={(e) => setPenSize(Number(e.target.value))} className="w-20" />
-            </label>
-            <label className="flex h-9 items-center gap-1 rounded-lg border border-white/15 bg-white/10 px-2">
-              <Icon name="highlight" className="h-3.5 w-3.5" />
-              <input
-                type="range"
-                min="0.08"
-                max="0.6"
-                step="0.01"
-                value={highlighterOpacity}
-                onChange={(e) => setHighlighterOpacity(Number(e.target.value))}
-                className="w-20"
-              />
             </label>
             <label className="flex h-9 items-center gap-1 rounded-lg border border-white/15 bg-white/10 px-2">
               <Icon name="move" className="h-3.5 w-3.5" />

@@ -44,10 +44,7 @@ function sampleTextColorFromPreview(target, previewCanvas) {
   if (w <= 0 || h <= 0) return rgb(0, 0, 0);
 
   const data = ctx.getImageData(x, y, w, h).data;
-  let rSum = 0;
-  let gSum = 0;
-  let bSum = 0;
-  let count = 0;
+  const samples = [];
 
   for (let i = 0; i < data.length; i += 4) {
     const a = data[i + 3];
@@ -56,15 +53,28 @@ function sampleTextColorFromPreview(target, previewCanvas) {
     const g = data[i + 1];
     const b = data[i + 2];
     // Skip near-white pixels to reduce page background influence.
-    if (r > 240 && g > 240 && b > 240) continue;
-    rSum += r;
-    gSum += g;
-    bSum += b;
-    count += 1;
+    if (r > 245 && g > 245 && b > 245) continue;
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    samples.push({ r, g, b, luminance });
   }
 
-  if (!count) return rgb(0, 0, 0);
-  return rgb(rSum / (count * 255), gSum / (count * 255), bSum / (count * 255));
+  if (!samples.length) return rgb(0, 0, 0);
+
+  // Use darker ink pixels (instead of averaging all anti-aliased pixels), so replacement text
+  // matches the original tone and does not look slightly lighter.
+  samples.sort((a, b) => a.luminance - b.luminance);
+  const takeCount = Math.max(1, Math.ceil(samples.length * 0.35));
+
+  let rSum = 0;
+  let gSum = 0;
+  let bSum = 0;
+  for (let i = 0; i < takeCount; i += 1) {
+    rSum += samples[i].r;
+    gSum += samples[i].g;
+    bSum += samples[i].b;
+  }
+
+  return rgb(rSum / (takeCount * 255), gSum / (takeCount * 255), bSum / (takeCount * 255));
 }
 
 export default function EditPage() {
@@ -83,7 +93,7 @@ export default function EditPage() {
   const [tool, setTool] = useState("move");
   const [brushColor, setBrushColor] = useState("#ff2e2e");
   const [brushSize, setBrushSize] = useState(4);
-  const [highlightOpacity, setHighlightOpacity] = useState(0.22);
+  const [highlightOpacity, setHighlightOpacity] = useState(0.14);
   const [textBox, setTextBox] = useState("Type here");
 
   const [textItems, setTextItems] = useState([]);

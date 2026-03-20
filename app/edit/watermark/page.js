@@ -52,6 +52,15 @@ function hexToRgbInt(hex) {
   };
 }
 
+function repeatShiftFromTextMetrics(textWidth, fontSize, angleDeg) {
+  const textHeight = Math.max(10, fontSize * 1.2);
+  const delta = ((Number(angleDeg) || -25) + 45) * (Math.PI / 180);
+  const projectedAlongDiagonal = Math.abs(textWidth * Math.cos(delta)) + Math.abs(textHeight * Math.sin(delta));
+  const diagonalPadding = Math.max(14, fontSize * 0.35);
+  const diagonalDistance = projectedAlongDiagonal + diagonalPadding;
+  return diagonalDistance / Math.SQRT2;
+}
+
 export default function WatermarkPage() {
   const previewCanvasRef = useRef(null);
   const [pdfBytes, setPdfBytes] = useState(null);
@@ -106,20 +115,23 @@ export default function WatermarkPage() {
         const safeFontSize = Number(fontSize) || 56;
         const safeAngle = Number(angle) || -25;
         const safeOpacity = Number(opacity) || 0.22;
+        const safeText = watermarkText || "CONFIDENTIAL";
 
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${safeOpacity})`;
         ctx.textBaseline = "alphabetic";
         ctx.font = `${safeFontSize}px ${fontForCanvas(fontName)}`;
+        const textWidth = Math.max(10, ctx.measureText(safeText).width);
+        const shiftStep = repeatShiftFromTextMetrics(textWidth, safeFontSize, safeAngle);
 
         for (let i = 0; i < safeRepeat; i += 1) {
-          const shift = i * Math.max(30, safeFontSize * 0.95);
+          const shift = i * shiftStep;
           const x = canvas.width * 0.12 + shift;
           const y = canvas.height * 0.55 - shift;
 
           ctx.save();
           ctx.translate(x, y);
           ctx.rotate((safeAngle * Math.PI) / 180);
-          ctx.fillText(watermarkText || "CONFIDENTIAL", 0, 0);
+          ctx.fillText(safeText, 0, 0);
           ctx.restore();
         }
       } catch {
@@ -160,17 +172,23 @@ export default function WatermarkPage() {
         const page = pdf.getPage(pageIndex);
         const { width, height } = page.getSize();
         const safeRepeat = Math.max(1, Number(repeatCount) || 1);
+        const safeFontSize = Number(fontSize) || 56;
+        const safeAngle = Number(angle) || -25;
+        const safeOpacity = Number(opacity) || 0.22;
+        const safeText = watermarkText || "CONFIDENTIAL";
+        const textWidth = Math.max(10, font.widthOfTextAtSize(safeText, safeFontSize));
+        const shiftStep = repeatShiftFromTextMetrics(textWidth, safeFontSize, safeAngle);
 
         for (let i = 0; i < safeRepeat; i += 1) {
-          const shift = i * Math.max(30, fontSize * 0.95);
-          page.drawText(watermarkText, {
+          const shift = i * shiftStep;
+          page.drawText(safeText, {
             x: width * 0.12 + shift,
             y: height * 0.55 - shift,
-            size: Number(fontSize) || 56,
-            rotate: degrees(Number(angle) || -25),
+            size: safeFontSize,
+            rotate: degrees(safeAngle),
             font,
             color,
-            opacity: Number(opacity) || 0.22
+            opacity: safeOpacity
           });
         }
       });
