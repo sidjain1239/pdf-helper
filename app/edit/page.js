@@ -5,11 +5,19 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { downloadBytes, fileToBytes, loadPdfJsLib } from "../lib/pdfClient";
 
 function pickReplacementFont(target) {
-  const token = `${target?.fontName || ""} ${target?.fontFamily || ""}`.toLowerCase();
+  const token = `${target?.fontName || ""} ${target?.fontFamily || ""} ${target?.fontWeight || ""} ${target?.fontStyle || ""}`.toLowerCase();
   const looksLikeTimes = token.includes("times");
   const looksLikeCourier = token.includes("courier") || token.includes("mono");
-  const isBold = token.includes("bold") || token.includes("black") || token.includes("semibold") || token.includes("demi");
-  const isItalic = token.includes("italic") || token.includes("oblique");
+  const isBold =
+    Boolean(target?.isBold) ||
+    token.includes("bold") ||
+    token.includes("black") ||
+    token.includes("semibold") ||
+    token.includes("demi") ||
+    token.includes("700") ||
+    token.includes("800") ||
+    token.includes("900");
+  const isItalic = Boolean(target?.isItalic) || token.includes("italic") || token.includes("oblique");
 
   if (looksLikeTimes) {
     if (isBold && isItalic) return StandardFonts.TimesRomanBoldItalic;
@@ -74,7 +82,50 @@ function sampleTextColorFromPreview(target, previewCanvas) {
     bSum += samples[i].b;
   }
 
-  return rgb(rSum / (takeCount * 255), gSum / (takeCount * 255), bSum / (takeCount * 255));
+  // Keep near-original tone; only apply a tiny correction for lighter anti-aliased samples.
+  const avg = (rSum + gSum + bSum) / (takeCount * 255 * 3);
+  const toneFactor = avg > 0.72 ? 0.985 : 0.995;
+  const r = Math.max(0, Math.min(1, (rSum / (takeCount * 255)) * toneFactor));
+  const g = Math.max(0, Math.min(1, (gSum / (takeCount * 255)) * toneFactor));
+  const b = Math.max(0, Math.min(1, (bSum / (takeCount * 255)) * toneFactor));
+  return rgb(r, g, b);
+}
+
+function sampleBackgroundColorFromPreview(target, previewCanvas) {
+  if (!target || !previewCanvas) return rgb(1, 1, 1);
+  const ctx = previewCanvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return rgb(1, 1, 1);
+
+  const pad = Math.max(6, Math.round(target.height * 0.25));
+  const x = Math.max(0, Math.floor(target.x - pad));
+  const y = Math.max(0, Math.floor(target.y - target.height - pad));
+  const w = Math.max(1, Math.min(previewCanvas.width - x, Math.ceil(target.width + pad * 2)));
+  const h = Math.max(1, Math.min(previewCanvas.height - y, Math.ceil(target.height * 1.4 + pad * 2)));
+  if (w <= 0 || h <= 0) return rgb(1, 1, 1);
+
+  const data = ctx.getImageData(x, y, w, h).data;
+  let rSum = 0;
+  let gSum = 0;
+  let bSum = 0;
+  let count = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const a = data[i + 3];
+    if (a < 24) continue;
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    // Prefer paper/background tones and skip darker glyph pixels.
+    if (luminance < 180) continue;
+    rSum += r;
+    gSum += g;
+    bSum += b;
+    count += 1;
+  }
+
+  if (!count) return rgb(1, 1, 1);
+  return rgb(rSum / (count * 255), gSum / (count * 255), bSum / (count * 255));
 }
 
 export default function EditPage() {
@@ -157,21 +208,48 @@ export default function EditPage() {
             const x = tx[4];
             const y = tx[5];
             const pdfFontSize = Math.max(8, Math.hypot(item.transform[2], item.transform[3]));
-            const h = Math.max(10, pdfFontSize * viewport.scale);
             const style = styles[item.fontName] || {};
+            const rawAscent = Number.isFinite(style.ascent) ? style.ascent : 0.82;
+            const rawDescent = Number.isFinite(style.descent) ? style.descent : -0.2;
+            const ascent = Math.min(1.08, Math.max(0.62, rawAscent));
+            const absDescent = Math.min(0.32, Math.max(0.08, Math.abs(rawDescent)));
+            const ascentPx = Math.max(7, pdfFontSize * viewport.scale * ascent);
+            const descentPx = Math.max(1.5, pdfFontSize * viewport.scale * absDescent);
+            const boxTop = Math.max(0, y - ascentPx);
+            const boxHeight = Math.max(10, ascentPx + descentPx);
+            const rawText = String(item.str || "");
+            const leadingSpaces = (rawText.match(/^\s+/)?.[0] || "").length;
+            const trailingSpaces = (rawText.match(/\s+$/)?.[0] || "").length;
+            const visibleChars = Math.max(1, rawText.trim().length || rawText.length);
+            const rawWidth = Math.max(12, item.width * viewport.scale);
+            const approxCharWidth = Math.max(2, pdfFontSize * viewport.scale * 0.34);
+            const leftInset = Math.min(rawWidth * 0.35, leadingSpaces * approxCharWidth);
+            const spaceTrimWidth = Math.max(10, rawWidth - (leadingSpaces + trailingSpaces) * approxCharWidth);
+            const glyphEstimatedWidth = Math.max(10, visibleChars * pdfFontSize * viewport.scale * 0.62);
+            const boxWidth = Math.max(10, Math.min(rawWidth, spaceTrimWidth, glyphEstimatedWidth));
+            const boxX = x + leftInset;
+            const weightToken = String(style.fontWeight || "").toLowerCase();
+            const styleToken = String(style.fontStyle || "").toLowerCase();
             return {
               id: idx,
               text: item.str,
               x,
               y,
-              width: Math.max(12, item.width * viewport.scale),
-              height: h,
+              width: rawWidth,
+              boxX,
+              boxWidth,
+              height: boxHeight,
+              boxTop,
               pdfX: item.transform[4],
               pdfY: item.transform[5],
               pdfWidth: Math.max(8, item.width),
               pdfFontSize,
               fontName: item.fontName || "",
-              fontFamily: style.fontFamily || ""
+              fontFamily: style.fontFamily || "",
+              fontWeight: style.fontWeight || "",
+              fontStyle: style.fontStyle || "",
+              isBold: /bold|black|semibold|demi|700|800|900/.test(weightToken),
+              isItalic: /italic|oblique/.test(styleToken)
             };
           })
           .filter((item) => item.text && item.text.trim());
@@ -415,6 +493,7 @@ export default function EditPage() {
       const page = pdf.getPage(selectedPage - 1);
       const font = await pdf.embedFont(pickReplacementFont(target));
       const sampledColor = sampleTextColorFromPreview(target, previewCanvasRef.current);
+      const sampledBackground = sampleBackgroundColorFromPreview(target, previewCanvasRef.current);
 
       const textSize = Math.max(9, target.pdfFontSize);
       const pdfX = target.pdfX;
@@ -428,7 +507,7 @@ export default function EditPage() {
         y: clearY,
         width: clearWidth,
         height: clearHeight,
-        color: rgb(1, 1, 1),
+        color: sampledBackground,
         opacity: 1
       });
       page.drawText(replaceTextValue, {
@@ -673,10 +752,10 @@ export default function EditPage() {
                             : "border-yellow-200/70 bg-yellow-300/15"
                         }`}
                         style={{
-                          left: `${(item.x / Math.max(1, canvasSize.width)) * 100}%`,
-                          top: `${(Math.max(0, item.y - item.height) / Math.max(1, canvasSize.height)) * 100}%`,
-                          width: `${(Math.max(18, item.width) / Math.max(1, canvasSize.width)) * 100}%`,
-                          height: `${(Math.max(12, item.height + 4) / Math.max(1, canvasSize.height)) * 100}%`
+                          left: `${((item.boxX ?? item.x) / Math.max(1, canvasSize.width)) * 100}%`,
+                          top: `${(Math.max(0, item.boxTop ?? item.y - item.height) / Math.max(1, canvasSize.height)) * 100}%`,
+                          width: `${(Math.max(12, item.boxWidth ?? item.width) / Math.max(1, canvasSize.width)) * 100}%`,
+                          height: `${(Math.max(10, item.height) / Math.max(1, canvasSize.height)) * 100}%`
                         }}
                         onClick={() => {
                           setSelectedTextIndex(item.id);

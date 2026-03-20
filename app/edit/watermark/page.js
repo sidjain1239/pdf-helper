@@ -61,9 +61,17 @@ function repeatShiftFromTextMetrics(textWidth, fontSize, angleDeg) {
   return diagonalDistance / Math.SQRT2;
 }
 
+function repeatOffsetByIndex(i, shiftStep) {
+  if (i === 0) return 0;
+  const level = Math.ceil(i / 2);
+  const direction = i % 2 === 1 ? -1 : 1;
+  return direction * level * shiftStep;
+}
+
 export default function WatermarkPage() {
   const previewCanvasRef = useRef(null);
   const [pdfBytes, setPdfBytes] = useState(null);
+  const [watermarkedBytes, setWatermarkedBytes] = useState(null);
   const [pdfjsLib, setPdfjsLib] = useState(null);
   const [fileName, setFileName] = useState("No file selected");
   const [status, setStatus] = useState("Ready");
@@ -124,9 +132,9 @@ export default function WatermarkPage() {
         const shiftStep = repeatShiftFromTextMetrics(textWidth, safeFontSize, safeAngle);
 
         for (let i = 0; i < safeRepeat; i += 1) {
-          const shift = i * shiftStep;
+          const shift = repeatOffsetByIndex(i, shiftStep);
           const x = canvas.width * 0.12 + shift;
-          const y = canvas.height * 0.55 - shift;
+          const y = canvas.height * 0.55 + shift;
 
           ctx.save();
           ctx.translate(x, y);
@@ -150,61 +158,79 @@ export default function WatermarkPage() {
     if (!file) return;
     const bytes = await fileToBytes(file);
     setPdfBytes(bytes);
+    setWatermarkedBytes(null);
     setFileName(file.name);
     setStatus("PDF loaded");
   }
 
-  async function addWatermark() {
-    try {
-      if (!pdfBytes) throw new Error("Upload a PDF first");
-      if (!watermarkText.trim()) throw new Error("Enter watermark text");
+  async function generateWatermarkedBytes(baseBytes) {
+    if (!baseBytes) return null;
+    if (!watermarkText.trim()) return null;
 
-      setStatus("Applying watermark...");
-      const pdf = await PDFDocument.load(pdfBytes);
-      const font = await pdf.embedFont(fontByName(fontName));
-      const color = hexToRgb01(colorHex);
+    const pdf = await PDFDocument.load(baseBytes);
+    const font = await pdf.embedFont(fontByName(fontName));
+    const color = hexToRgb01(colorHex);
 
-      const pageIndices = currentPageOnly
-        ? [Math.max(0, Math.min(pdf.getPageCount() - 1, Number(targetPage) - 1))]
-        : pdf.getPageIndices();
+    const pageIndices = currentPageOnly
+      ? [Math.max(0, Math.min(pdf.getPageCount() - 1, Number(targetPage) - 1))]
+      : pdf.getPageIndices();
 
-      pageIndices.forEach((pageIndex) => {
-        const page = pdf.getPage(pageIndex);
-        const { width, height } = page.getSize();
-        const safeRepeat = Math.max(1, Number(repeatCount) || 1);
-        const safeFontSize = Number(fontSize) || 56;
-        const safeAngle = Number(angle) || -25;
-        const safeOpacity = Number(opacity) || 0.22;
-        const safeText = watermarkText || "CONFIDENTIAL";
-        const textWidth = Math.max(10, font.widthOfTextAtSize(safeText, safeFontSize));
-        const shiftStep = repeatShiftFromTextMetrics(textWidth, safeFontSize, safeAngle);
+    pageIndices.forEach((pageIndex) => {
+      const page = pdf.getPage(pageIndex);
+      const { width, height } = page.getSize();
+      const safeRepeat = Math.max(1, Number(repeatCount) || 1);
+      const safeFontSize = Number(fontSize) || 56;
+      const safeAngle = Number(angle) || -25;
+      const safeOpacity = Number(opacity) || 0.22;
+      const safeText = watermarkText || "CONFIDENTIAL";
+      const textWidth = Math.max(10, font.widthOfTextAtSize(safeText, safeFontSize));
+      const shiftStep = repeatShiftFromTextMetrics(textWidth, safeFontSize, safeAngle);
 
-        for (let i = 0; i < safeRepeat; i += 1) {
-          const shift = i * shiftStep;
-          page.drawText(safeText, {
-            x: width * 0.12 + shift,
-            y: height * 0.55 - shift,
-            size: safeFontSize,
-            rotate: degrees(safeAngle),
-            font,
-            color,
-            opacity: safeOpacity
-          });
-        }
-      });
+      for (let i = 0; i < safeRepeat; i += 1) {
+        const shift = repeatOffsetByIndex(i, shiftStep);
+        page.drawText(safeText, {
+          x: width * 0.12 + shift,
+          // PDF Y-axis grows upward, opposite of canvas preview.
+          y: height * 0.55 - shift,
+          size: safeFontSize,
+          // Match preview tilt direction: canvas and PDF use different coordinate orientation.
+          rotate: degrees(-safeAngle),
+          font,
+          color,
+          opacity: safeOpacity
+        });
+      }
+    });
 
-      const result = await pdf.save({ useObjectStreams: true });
-      setPdfBytes(result);
-      setStatus("Watermark applied");
-    } catch (error) {
-      setStatus(`Watermark failed: ${error.message}`);
-    }
+    return pdf.save({ useObjectStreams: true });
   }
 
-  function downloadResult() {
+  useEffect(() => {
     if (!pdfBytes) return;
+    let cancelled = false;
+
+    const timer = setTimeout(async () => {
+      try {
+        setStatus("Applying watermark automatically...");
+        const result = await generateWatermarkedBytes(pdfBytes);
+        if (cancelled) return;
+        setWatermarkedBytes(result);
+        setStatus(result ? "Watermark auto-applied" : "Enter watermark text to generate output");
+      } catch (error) {
+        if (!cancelled) setStatus(`Watermark failed: ${error.message}`);
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [pdfBytes, watermarkText, fontName, fontSize, angle, colorHex, opacity, repeatCount, currentPageOnly, targetPage]);
+
+  function downloadResult() {
+    if (!watermarkedBytes) return;
     const outName = fileName.replace(/\.pdf$/i, "") + "-watermarked.pdf";
-    downloadBytes(pdfBytes, outName, "application/pdf");
+    downloadBytes(watermarkedBytes, outName, "application/pdf");
     setStatus(`Downloaded ${outName}`);
   }
 
@@ -313,9 +339,6 @@ export default function WatermarkPage() {
             ) : null}
           </div>
 
-          <button className="neon-btn mt-3 w-full rounded-lg px-3 py-2" onClick={addWatermark}>
-            Apply Watermark
-          </button>
           <button className="neon-btn mt-2 w-full rounded-lg px-3 py-2" onClick={downloadResult}>
             Download Watermarked PDF
           </button>
